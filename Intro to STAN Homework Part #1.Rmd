@@ -1,0 +1,140 @@
+---
+title: "ANLY505 - Intro to Stan"
+subtitle: "Week 4"
+author: "Krzysztof Herman"
+date: "`r Sys.Date()`"
+output: html_document
+knit: (function(inputFile, encoding) { 
+      rmarkdown::render(inputFile,
+                        encoding=encoding, 
+                        output_file=file.path(dirname(inputFile), 
+                         'Intro to Stan.html')) })
+                      
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(rstan)
+library(gdata)
+library(bayesplot)
+library(dplyr)
+library(pastecs)
+library(ggplot2)
+library(datasets)
+library(gridExtra)
+library(modelr)
+```
+
+## Intro to STAN Homework Part #1
+
+After our Intro to Stan lecture I think it would be valuable to have you go through a similar exercise.  Let's test a second research question.
+
+Research question: Is sea ice extent declining in the Southern Hemisphere over time? Is the same pattern happening in the Antarctic as in the Arctic? Fit a Stan model to find out!
+
+Make sure you follow the steps we used in class.
+
+What do your Stan model results indicate so far?
+
+## 1. Load and Inspect Data
+
+```{r load and inspect data}
+setwd("C:/Users/kgher/Desktop/Analytics/ANLY 505/Assignments/Intro to Stan Homework Part #1")
+data <- read.csv("seaice.csv", stringsAsFactors=F)
+stat.desc(data)
+summary(data)
+
+```
+
+## 2. Plot the data
+
+```{r plot the data}
+plot(extent_south ~ ï..year, pch = 25, data = data,main = "Sea ice in extent South", xlab = "Year", ylab = "Sea ice in the south", col = "blue") 
+abline(lm(data$extent_south ~ data$ï..year), col = "red", lty = 2, lwd = 2) 
+
+
+```
+The plot shows a mild positive trend. Moreover, latest observations show a significant increase in the dispersion of the recorder values. 
+## 3. Run a general linear model using lm()
+
+```{r lm and add model prediction}
+model_1 <- lm(extent_south~ï..year, data=data)
+summary(model_1)
+
+
+```
+
+
+## 4. Index the data, re-run the lm(), extract summary statistics and turn the indexed data into a dataframe to pass into Stan
+
+```{r prepare the data-re-run lm()-extract summary statistics}
+data <- data %>% mutate("index"=I(ï..year)-1978) 
+lm2 <- lm(extent_south~index, data=data)
+summary(lm2)
+
+
+
+```
+Indexing the data does not change the value if the "index" coefficient; rather, it changes the value of the intercept. This is in line with expectations since the relation between Ice and index will not change by indexing as the relation between the two variables is the same. However, the intercept is expected to change as the scale for year has changed. 
+## 5. Write the Stan model
+
+```{r the Stan model}
+#write the code
+stan_data <- list(N=nrow(data), y=data$extent_south, x=data$index)
+ write("// Stan model for simple linear regression
+
+data {
+ int < lower = 1 > N; // Sample size
+ vector[N] x; // Predictor
+ vector[N] y; // Outcome
+}
+
+parameters {
+ real alpha; // Intercept
+ real beta; // Slope (regression coefficients)
+ real < lower = 0 > sigma; // Error SD
+}
+
+model {
+ y ~ normal(alpha + x * beta , sigma);
+}
+
+generated quantities {
+} // The posterior predictive distribution",
+
+"stan_model1.stan")
+
+
+stan_model1 <- "stan_model1.stan"
+stanc("stan_model1.stan")
+
+```
+
+## 6. Run the Stan model and inspect the results
+
+```{r run the Stan model}
+runstan <- stan(file = "stan_model1.stan", data = stan_data, warmup = 500, iter = 1000, chains = 4, cores = 2, thin = 1)
+runstan
+```
+
+## 7, 8, 9. Extract the posterior estimates into a list so we can plot them
+
+```{r extract the posterior}
+posterior2 <- rstan::extract(runstan)
+
+p1 <- data %>% add_predictions(lm2,"pred_south") %>% ggplot(aes(index,extent_south)) + geom_point() + geom_line(aes(y=pred_south),color="red",size=1)+ labs(x="Index",y="Ice extent in the Southern Hemisphere")+   ggtitle("Initial  lm model")
+
+p2 <- data %>% ggplot(aes(index,extent_south))+ labs(x="Index",y="Ice extent in the Southern Hemisphere")+
+  ggtitle("Model with non-informative priors")
+for (i in 1:500) {
+  p2 <- p2+geom_abline(intercept=posterior2$alpha[i],slope=posterior2$beta[i],color="grey")
+}
+p2 <- p2+geom_point()+
+  geom_abline(intercept=mean(posterior2$alpha),slope=mean(posterior2$beta),color="blue",size=1)
+
+gridExtra::grid.arrange(p1,p2, nrow=1, bottom="Models comparison")
+
+```
+
+
+
